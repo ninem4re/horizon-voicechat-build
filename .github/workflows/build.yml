@@ -1,0 +1,100 @@
+name: Build Horizon voice-chat engine
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/build.yml
+      - scripts/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: voicechat-engine-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_BUILD_JOBS: "2"
+  CARGO_INCREMENTAL: "0"
+  CARGO_PROFILE_RELEASE_LTO: "false"
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+  CARGO_PROFILE_RELEASE_DEBUG: "0"
+  CARGO_PROFILE_RELEASE_STRIP: debuginfo
+  CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: clang
+  RUSTFLAGS: -C target-cpu=x86-64 -C link-arg=-fuse-ld=lld
+  HORIZON_VERSION: nightly-2026-11-13-9f42064-voicechat
+  HORIZON_NIGHTLY: "1"
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+    steps:
+      - name: Check out build configuration
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Check out pinned official mods and build helper
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: horizon-rust/horizon-mods
+          ref: 87cbc721e68a689559c508cb5357d77cdae2ab81
+          path: horizon-mods
+          persist-credentials: false
+
+      - name: Set up Python for the official native-mod helper
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build dependencies and pinned Rust
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld pkg-config rsync libasound2-dev libudev-dev
+          rustup toolchain install 1.99.1 --profile minimal
+          rustup default 1.99.1
+          rustc --version
+          cargo --version
+
+      - name: Cache Rust dependencies and compiler output
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: |
+            horizon-mods/native/voicechat-server
+          cache-directories: |
+            horizon-mods/native/target/cargo
+            horizon-mods/native/target/horizon-mixins
+          key: nightly-2026-11-13-voicechat-rust-1.99.1
+
+      - name: Test the official voice-chat relay
+        working-directory: horizon-mods/native/voicechat-server
+        run: cargo test --locked
+
+      - name: Apply mod, compile server engine, verify and package
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/build_engine.py --mods-root horizon-mods --output dist
+
+      - name: Upload downloadable engine and checksums
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: horizon-voicechat-linux-x86_64-nightly-2026-11-13
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+
+      - name: Write download and installation summary
+        run: |
+          {
+            echo '## Horizon voice-chat engine ready'
+            echo 'Download the artifact at the bottom of this run page, then unzip it.'
+            echo 'Upload the .tar.gz and .sha256 files to your server and follow INSTALL.md inside the archive.'
+            echo 'Engine: November 13 nightly (9f42064) plus official voicechat_server 1.0.0.'
+            echo 'Keep your existing prepared resources. Voice chat needs a compatible Horizon client mod and UDP 24454.'
+            echo 'Relay tests, optimized build, CLI startup, and shared-library checks passed.'
+            echo 'A live world/voice session still needs verification on your server.'
+          } >> "$GITHUB_STEP_SUMMARY"
