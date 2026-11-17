@@ -34,6 +34,20 @@ def main():
     if actual != MODS_REV:
         raise SystemExit(f"Expected Horizon Mods {MODS_REV}, got {actual}")
 
+    project = Path(__file__).resolve().parents[1]
+    patch = project / "fabric-svc.patch"
+    print("::group::Apply and test standard Fabric SVC compatibility", flush=True)
+    run(["git", "apply", "--check", patch], cwd=mods)
+    run(["git", "apply", patch], cwd=mods)
+    relay_root = mods / "native/voicechat-server"
+    probe_target = relay_root / "target"
+    probe_env = dict(os.environ, CARGO_TARGET_DIR=str(probe_target))
+    run(["cargo", "test", "--locked", "--all-targets"], cwd=relay_root, env=probe_env)
+    run(["cargo", "build", "--locked", "--example", "fabric_interop_probe"], cwd=relay_root, env=probe_env)
+    run(["java", project / "FabricInteropTest.java",
+         probe_target / "debug/examples/fabric_interop_probe"], timeout=120)
+    print("::endgroup::", flush=True)
+
     spec = importlib.util.spec_from_file_location("horizon_native", mods / "native/tools/native.py")
     native = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(native)
@@ -77,6 +91,9 @@ def main():
         "mods_revision": MODS_REV,
         "voicechat_mod": mod.id,
         "voicechat_version": mod.version,
+        "fabric_simple_voice_chat": "2.6.x (compatibility 20); Minecraft 26.3",
+        "fabric_patch_sha256": hashlib.sha256(patch.read_bytes()).hexdigest(),
+        "svc_protocol_reference": "henkelmax/simple-voice-chat@2e56198016e02fd99139d37f382b7155c5bd63f5",
         "horizon_mixins_revision": mod.compat["horizon_mixins_revision"],
         "target": "x86_64-unknown-linux-gnu",
         "rustc": subprocess.check_output(["rustc", "--version"], text=True).strip(),
@@ -85,16 +102,17 @@ def main():
         "build_run": os.environ.get("GITHUB_RUN_ID", ""),
         "profile": "release; lto=false; codegen-units=16; target-cpu=x86-64",
         "engine_sha256": engine_digest,
-        "verification": ["relay tests", "cargo build --locked", "--help", "ldd"],
+        "verification": ["relay and transport tests", "independent Java AES-GCM/UDP interoperability", "cargo build --locked", "--help", "ldd"],
     }
     (package / "build-info.json").write_text(json.dumps(info, indent=2) + "\n")
     shutil.copy2(Path(__file__).resolve().parents[1] / "README.md", package / "INSTALL.md")
     shutil.copy2(stage / "LICENSE", package / "LICENSE-HORIZON")
     shutil.copy2(mods / "native/voicechat-server/LICENSE", package / "LICENSE-VOICECHAT")
+    shutil.copy2(patch, package / "fabric-svc.patch")
     if (stage / "THIRD_PARTY_NOTICES.md").is_file():
         shutil.copy2(stage / "THIRD_PARTY_NOTICES.md", package)
 
-    # Corresponding modified source travels with the LGPL engine. Never include Cargo
+    # Corresponding modified source travels with the engine. Never include Cargo
     # output, Minecraft resources, game jars, or a local game directory.
     def source_filter(member):
         parts = Path(member.name).parts
