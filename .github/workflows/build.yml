@@ -6,6 +6,8 @@ on:
     paths:
       - .github/workflows/build.yml
       - scripts/**
+      - fabric-svc.patch
+      - FabricInteropTest.java
   workflow_dispatch:
 
 permissions:
@@ -50,6 +52,12 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Set up Java 21 for independent SVC interoperability tests
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
       - name: Install build dependencies and pinned Rust
         run: |
           sudo apt-get update
@@ -68,10 +76,6 @@ jobs:
             horizon-mods/native/target/cargo
             horizon-mods/native/target/horizon-mixins
           key: nightly-2026-11-13-voicechat-rust-1.99.1
-
-      - name: Test the official voice-chat relay
-        working-directory: horizon-mods/native/voicechat-server
-        run: cargo test --locked
 
       - name: Apply mod, compile server engine, verify and package
         env:
@@ -93,8 +97,8 @@ jobs:
             echo '## Horizon voice-chat engine ready'
             echo 'Download the artifact at the bottom of this run page, then unzip it.'
             echo 'Upload the .tar.gz and .sha256 files to your server and follow INSTALL.md inside the archive.'
-            echo 'Engine: November 13 nightly (9f42064) plus official voicechat_server 1.0.0.'
-            echo 'Keep your existing prepared resources. Voice chat needs a compatible Horizon client mod and UDP 24454.'
-            echo 'Relay tests, optimized build, CLI startup, and shared-library checks passed.'
+            echo 'Engine: November 13 nightly (9f42064), with Fabric Simple Voice Chat 2.6.x support.'
+            echo 'Use the standard Fabric SVC 2.6.x client for Minecraft 26.3; keep your resources and open UDP 24454.'
+            echo '24 Rust tests, independent Java AES-GCM/UDP interoperability, engine build, startup and shared-library checks passed.'
             echo 'A live world/voice session still needs verification on your server.'
           } >> "$GITHUB_STEP_SUMMARY"
