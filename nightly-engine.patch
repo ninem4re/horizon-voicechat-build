@@ -89,18 +89,6 @@ index f679651..a61d874 100644
  pub mod advancements;
  pub mod ambience;
  pub mod animate_tick;
-diff --git a/crates/horizon-client/src/game.rs b/crates/horizon-client/src/game.rs
-index 57c0622..0991eca 100644
---- a/crates/horizon-client/src/game.rs
-+++ b/crates/horizon-client/src/game.rs
-@@ -111,6 +111,7 @@ pub mod points {
- }
- mod host;
- mod native_hooks;
-+mod voicechat_server;
- use event_loop::EventLoopCtl;
- use hand::interact_location;
- pub(crate) use hit::Hit;
 diff --git a/crates/horizon-client/src/game/administration/commands/mod.rs b/crates/horizon-client/src/game/administration/commands/mod.rs
 index 0434597..c0ef7a2 100644
 --- a/crates/horizon-client/src/game/administration/commands/mod.rs
@@ -138,65 +126,11 @@ index 0434597..c0ef7a2 100644
              "native_mod_command" => self.run_native_command(ctx.clone()),
              "help" => self.cmd_help(ctx),
              "gamemode" => self.cmd_gamemode(ctx),
-diff --git a/crates/horizon-client/src/game/native_hooks/base.rs b/crates/horizon-client/src/game/native_hooks/base.rs
-index ec60171..60cf4af 100644
---- a/crates/horizon-client/src/game/native_hooks/base.rs
-+++ b/crates/horizon-client/src/game/native_hooks/base.rs
-@@ -669,6 +669,7 @@ impl Game<'_> {
-     }
-     /// Server teardown has finished, including the final save if possible.
-     pub(in crate::game) fn native_server_stopped(&mut self, dedicated: bool) {
-+        super::voicechat_server::stop();
-         self.fire_server_stopped(dedicated);
-     }
-     /// The server opened its worlds and is about to tick (NeoForge's
-@@ -697,6 +698,9 @@ impl Game<'_> {
-         context: &LifecycleContext,
-         phase: ServerTickPhase,
-     ) {
-+        if matches!(phase, ServerTickPhase::ServerTickEnd { .. }) {
-+            super::voicechat_server::tick(self);
-+        }
-         self.fire_server_tick(context, phase);
-     }
-     /// Before an authoritative server level's tick pass. `dimension` is its ID.
-@@ -3612,6 +3616,7 @@ impl Game<'_> {
-     /// `host.players().server_players()`, so `PlayerRef::send_payload` can reach them.
-     /// Once a join, with no player's state swapped in. Server-side.
-     pub(in crate::game) fn native_player_logged_in(&mut self, player: u128, name: &str) {
-+        super::voicechat_server::advertise(self, player);
-         self.fire_player_logged_in(player, name);
-     }
-     /// `player` (`name`) left the game (NeoForge's `PlayerLoggedOutEvent`), by
-@@ -3623,6 +3628,7 @@ impl Game<'_> {
-     /// before it saves, with them still listed and able to get a last message.
-     /// Server-side.
-     pub(in crate::game) fn native_player_logged_out(&mut self, player: u128, name: &str) {
-+        super::voicechat_server::left(player);
-         self.fire_player_logged_out(player, name);
-     }
-     /// `PlayerRespawnPositionEvent`: where `player` respawns, once the server found it. The
-diff --git a/crates/horizon-client/src/game/network/lan_actions/packets.rs b/crates/horizon-client/src/game/network/lan_actions/packets.rs
-index f6f337c..b39ec02 100644
---- a/crates/horizon-client/src/game/network/lan_actions/packets.rs
-+++ b/crates/horizon-client/src/game/network/lan_actions/packets.rs
-@@ -130,6 +130,11 @@ impl Game<'_> {
- 
-     /// A packet from a guest that the hub does not handle itself.
-     pub(in crate::game) fn lan_guest_packet(&mut self, conn: u32, packet: S) {
-+        if let S::CustomPayload(p) = &packet
-+            && (p.channel.starts_with("voicechat:") || p.channel == "horizon:mod_net") {
-+            crate::game::voicechat_server::incoming(self, conn, &p.channel, &p.data);
-+            return;
-+        }
-         // A crossing the hub's move check passed; a dead player's is refused, not dropped.
-         if let S::CustomPayload(p) = &packet
-             && p.channel == horizon_protocol::passage_sync::CROSS_CHANNEL
-diff --git a/crates/horizon-client/src/game/voicechat_server.rs b/crates/horizon-client/src/game/voicechat_server.rs
+diff --git a/crates/horizon-client/src/game/modding/voicechat_server.rs b/crates/horizon-client/src/game/modding/voicechat_server.rs
 new file mode 100644
 index 0000000..f2c622b
 --- /dev/null
-+++ b/crates/horizon-client/src/game/voicechat_server.rs
++++ b/crates/horizon-client/src/game/modding/voicechat_server.rs
 @@ -0,0 +1,171 @@
 +// Standard SVC 2.6.x plugin channels, retaining Horizon clients.
 +use crate::game::Game;
@@ -369,6 +303,63 @@ index 0000000..f2c622b
 +        plugin_message(game, uuid, channel, data);
 +    }
 +}
+diff --git a/crates/horizon-client/src/game/native_hooks/base.rs b/crates/horizon-client/src/game/native_hooks/base.rs
+index ec60171..60cf4af 100644
+--- a/crates/horizon-client/src/game/native_hooks/base.rs
++++ b/crates/horizon-client/src/game/native_hooks/base.rs
+@@ -669,6 +669,7 @@ impl Game<'_> {
+     }
+     /// Server teardown has finished, including the final save if possible.
+     pub(in crate::game) fn native_server_stopped(&mut self, dedicated: bool) {
++        super::voicechat_server::stop();
+         self.fire_server_stopped(dedicated);
+     }
+     /// The server opened its worlds and is about to tick (NeoForge's
+@@ -697,6 +698,9 @@ impl Game<'_> {
+         context: &LifecycleContext,
+         phase: ServerTickPhase,
+     ) {
++        if matches!(phase, ServerTickPhase::ServerTickEnd { .. }) {
++            super::voicechat_server::tick(self);
++        }
+         self.fire_server_tick(context, phase);
+     }
+     /// Before an authoritative server level's tick pass. `dimension` is its ID.
+@@ -3612,6 +3616,7 @@ impl Game<'_> {
+     /// `host.players().server_players()`, so `PlayerRef::send_payload` can reach them.
+     /// Once a join, with no player's state swapped in. Server-side.
+     pub(in crate::game) fn native_player_logged_in(&mut self, player: u128, name: &str) {
++        super::voicechat_server::advertise(self, player);
+         self.fire_player_logged_in(player, name);
+     }
+     /// `player` (`name`) left the game (NeoForge's `PlayerLoggedOutEvent`), by
+@@ -3623,6 +3628,7 @@ impl Game<'_> {
+     /// before it saves, with them still listed and able to get a last message.
+     /// Server-side.
+     pub(in crate::game) fn native_player_logged_out(&mut self, player: u128, name: &str) {
++        super::voicechat_server::left(player);
+         self.fire_player_logged_out(player, name);
+     }
+     /// `PlayerRespawnPositionEvent`: where `player` respawns, once the server found it. The
+diff --git a/crates/horizon-client/src/game/network/lan_actions/packets.rs b/crates/horizon-client/src/game/network/lan_actions/packets.rs
+index f6f337c..b39ec02 100644
+--- a/crates/horizon-client/src/game/network/lan_actions/packets.rs
++++ b/crates/horizon-client/src/game/network/lan_actions/packets.rs
+@@ -130,6 +130,11 @@ impl Game<'_> {
+ 
+     /// A packet from a guest that the hub does not handle itself.
+     pub(in crate::game) fn lan_guest_packet(&mut self, conn: u32, packet: S) {
++        if let S::CustomPayload(p) = &packet
++            && (p.channel.starts_with("voicechat:") || p.channel == "horizon:mod_net") {
++            crate::game::voicechat_server::incoming(self, conn, &p.channel, &p.data);
++            return;
++        }
+         // A crossing the hub's move check passed; a dead player's is refused, not dropped.
+         if let S::CustomPayload(p) = &packet
+             && p.channel == horizon_protocol::passage_sync::CROSS_CHANNEL
+diff --git a/crates/horizon-client/src/game/voicechat_server.rs b/crates/horizon-client/src/game/voicechat_server.rs
+deleted file mode 100644
+index e69de29..0000000
 diff --git a/crates/horizon-client/src/lan/conn.rs b/crates/horizon-client/src/lan/conn.rs
 index 958f934..bcf9520 100644
 --- a/crates/horizon-client/src/lan/conn.rs
@@ -415,10 +406,10 @@ index f99ad23..f3ba9da 100644
      tree.requires(profile, MODPROFILE_PERMISSION.0);
 diff --git a/crates/horizon-skins-restorer/Cargo.toml b/crates/horizon-skins-restorer/Cargo.toml
 new file mode 100644
-index 0000000..95183f8
+index 0000000..6c915d8
 --- /dev/null
 +++ b/crates/horizon-skins-restorer/Cargo.toml
-@@ -0,0 +1,9 @@
+@@ -0,0 +1,12 @@
 +[package]
 +name = "horizon-skins-restorer"
 +version = "1.0.0"
@@ -428,6 +419,9 @@ index 0000000..95183f8
 +serde = { version = "1", features = ["derive"] }
 +serde_json = "1"
 +ureq = { version = "2", default-features = false, features = ["tls"] }
++
++[lints]
++workspace = true
 diff --git a/crates/horizon-skins-restorer/src/lib.rs b/crates/horizon-skins-restorer/src/lib.rs
 new file mode 100644
 index 0000000..bfc3544
