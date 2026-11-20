@@ -1,14 +1,10 @@
-# Horizon server with Fabric Simple Voice Chat support
+# Horizon server with Fabric voice chat and skins
 
-Builds a Linux x86-64 `horizon-engine` from **Nightly 2026-11-13**, commit `9f42064c11efe7ef3e5ed2baad7ddc2a3b36eea0`, with Horizon's voice-chat relay patched to support **standard Fabric Simple Voice Chat 2.6.x clients (compatibility version 20) on Minecraft 26.3**. Existing compatible Horizon voice-chat clients remain supported, including mixed groups of Fabric and Horizon players.
-
-The first build (run #1) predates this patch and only supports Horizon mod messages. Download a successful run containing `fabric-svc.patch` and a `fabric_simple_voice_chat` entry in `build-info.json`.
+Builds a Linux x86-64 `horizon-engine` from **Nightly 2026-11-19**, commit `5ef7734fdd854add5efd6817178be3c988d8d050`, with Horizon's voice-chat relay patched to support **standard Fabric Simple Voice Chat 2.6.x clients (compatibility version 20) on Minecraft 26.3**. Skin restoration is built into the engine. Compatible older Horizon voice clients can still use the legacy voice transport.
 
 ## Download
 
-Open [Actions](https://github.com/ninem4re/horizon-voicechat-build/actions/workflows/build.yml), select the latest successful patched build, and download `horizon-voicechat-linux-x86_64-nightly-2026-11-13` under Artifacts. GitHub sign-in is required. Unzip the download; upload the `.tar.gz` and its adjacent `.sha256` file to your server.
-
-The workflow runs on changes to the build script or workflow; **Run workflow** rebuilds it manually. Artifacts are retained for 90 days.
+Download the Linux x86-64 archive and its adjacent SHA-256 file from [Releases](https://github.com/ninem4re/horizon-voicechat-build/releases). The same files are available under Artifacts in successful [Actions builds](https://github.com/ninem4re/horizon-voicechat-build/actions/workflows/build.yml).
 
 ## Install on your SSH server
 
@@ -16,17 +12,17 @@ Keep your `horizon-server`, world, configuration, and prepared `resources/` dire
 
 ```sh
 sha256sum -c horizon-engine-voicechat-linux-x86_64.tar.gz.sha256
-mkdir -p engines/voicechat-fabric-2026-11-13
-tar -xzf horizon-engine-voicechat-linux-x86_64.tar.gz -C engines/voicechat-fabric-2026-11-13
-chmod +x engines/voicechat-fabric-2026-11-13/horizon-engine
-realpath engines/voicechat-fabric-2026-11-13/horizon-engine
+mkdir -p engines/voicechat-fabric-2026-11-19
+tar -xzf horizon-engine-voicechat-linux-x86_64.tar.gz -C engines/voicechat-fabric-2026-11-19
+chmod +x engines/voicechat-fabric-2026-11-19/horizon-engine
+realpath engines/voicechat-fabric-2026-11-19/horizon-engine
 ```
 
 Stop the server normally. In your existing `[engine]` section of `server.toml`, set `path` to the absolute path printed above:
 
 ```toml
 [engine]
-path = "/absolute/path/to/server/engines/voicechat-fabric-2026-11-13/horizon-engine"
+path = "/absolute/path/to/server/engines/voicechat-fabric-2026-11-19/horizon-engine"
 ```
 
 Preserve the other keys, including your resources setting; do not add a second `[engine]` section. Start `horizon-server` as usual. To roll back, stop it, restore the previous engine path, and start again.
@@ -43,9 +39,13 @@ Forward/open **UDP 24454** to the server, including any provider firewall. A web
 
 The server advertises its incoming `voicechat:*` channels through `minecraft:register`, handles standard custom payloads, and returns control messages on the transport each player selected. The AES-GCM UDP relay, player secrets, rate limits, replay protection, distance/dimension rules, and group routing are retained.
 
+## Skins
+
+The engine looks up a signed Mojang skin by account name when a connecting player lacks a skin. Use `/skin <MinecraftName>` to save a selection, or `/skin reset` to return to automatic behavior. Reconnect to apply a change. If the account has no signed texture or the lookup fails, the login proceeds with the profile it already had. Choices are stored by player UUID in `config/skins-restorer.json`. The server needs outbound HTTPS to Minecraft Services and Mojang's session server.
+
 ## Tests and source
 
-`fabric-svc.patch` applies to the pinned official Horizon Mods revision `87cbc721e68a689559c508cb5357d77cdae2ab81` before the official native-build helper applies the mod to Horizon. Source pins, patch checksum and build provenance are in `build-info.json`. The complete staged Rust source, patch and license notices ship with the engine.
+`fabric-svc.patch` applies to the pinned official Horizon Mods revision `87cbc721e68a689559c508cb5357d77cdae2ab81` and `nightly-engine.patch` connects the relay and the built-in skin restorer to this Horizon revision. Source pins, patch checksum and build provenance are in `build-info.json`. The complete staged Rust source, patch and license notices ship with the engine.
 
 Validation includes:
 

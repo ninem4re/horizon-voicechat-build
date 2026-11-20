@@ -1,0 +1,572 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index 7f2fbe7..86dc1e0 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1815,6 +1815,7 @@ dependencies = [
+ name = "horizon-client"
+ version = "0.1.0"
+ dependencies = [
++ "voicechat_server_relay",
+  "ab_glyph",
+  "bytemuck",
+  "cap-fs-ext",
+@@ -1932,6 +1933,7 @@ dependencies = [
+ name = "horizon-client-lib"
+ version = "0.1.0"
+ dependencies = [
++ "horizon-skins-restorer",
+  "ab_glyph",
+  "bytemuck",
+  "chrono",
+@@ -7487,3 +7489,21 @@ checksum = "29ce2c8a9384ad323cf564b67da86e21d3cfdff87908bc1223ed5c99bc792713"
+ dependencies = [
+  "zune-core",
+ ]
++
++[[package]]
++name = "voicechat_server_relay"
++version = "1.0.0"
++dependencies = [
++ "ring",
++ "serde",
++ "serde_json",
++]
++
++[[package]]
++name = "horizon-skins-restorer"
++version = "1.0.0"
++dependencies = [
++ "serde",
++ "serde_json",
++ "ureq",
++]
+diff --git a/Cargo.toml b/Cargo.toml
+index f7c2dc2..1d7a70f 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -1,6 +1,8 @@
+ [workspace]
+ exclude = ["crates/horizon-telemetry-server", "launcher", "crates/horizon-mod-registry", "third_party/wgpu-hal", "third_party/naga", "third_party/libmimalloc-sys", "tools/fixtures/paper-trace-mod"]
+ members = [
++    "crates/voicechat-server-relay",
++    "crates/horizon-skins-restorer",
+     "crates/horizon-guest-stack",
+     "crates/horizon-mod-vocab",
+     "crates/horizon-game-discovery",
+diff --git a/crates/horizon-client-lib/Cargo.toml b/crates/horizon-client-lib/Cargo.toml
+index c1cb12c..a9ffe8a 100644
+--- a/crates/horizon-client-lib/Cargo.toml
++++ b/crates/horizon-client-lib/Cargo.toml
+@@ -16,6 +16,7 @@ horizon-game-discovery = { path = "../horizon-game-discovery" }
+ path = "../horizon-client/src/client_lib.rs"
+ 
+ [dependencies]
++horizon-skins-restorer = { path = "../horizon-skins-restorer" }
+ horizon-guest-stack = { path = "../horizon-guest-stack" }
+ horizon-mod-api-macros = { path = "../horizon-mod-api-macros" }
+ horizon-engine-slots = { path = "../horizon-engine-slots" }
+diff --git a/crates/horizon-client/Cargo.toml b/crates/horizon-client/Cargo.toml
+index 5c5a7fb..88a418c 100644
+--- a/crates/horizon-client/Cargo.toml
++++ b/crates/horizon-client/Cargo.toml
+@@ -16,6 +16,7 @@ horizon-mod-api-gen = { path = "../horizon-mod-api-gen" }
+ winresource = "0.1"
+ 
+ [dependencies]
++voicechat_server_relay = { path = "../voicechat-server-relay" }
+ horizon-guest-stack = { path = "../horizon-guest-stack" }
+ horizon-cosmetics = { path = "../horizon-cosmetics" }
+ horizon-hooks = { path = "../horizon-hooks" }
+diff --git a/crates/horizon-client/src/client_lib.rs b/crates/horizon-client/src/client_lib.rs
+index f679651..a61d874 100644
+--- a/crates/horizon-client/src/client_lib.rs
++++ b/crates/horizon-client/src/client_lib.rs
+@@ -6,6 +6,7 @@ extern crate self as horizon_client;
+ #[global_allocator]
+ static TEST_ALLOCATOR: horizon_threads::allocation_probe::Allocator =
+     horizon_threads::allocation_probe::Allocator;
++pub use horizon_skins_restorer as skins_restorer;
+ pub mod advancements;
+ pub mod ambience;
+ pub mod animate_tick;
+diff --git a/crates/horizon-client/src/game.rs b/crates/horizon-client/src/game.rs
+index 57c0622..0991eca 100644
+--- a/crates/horizon-client/src/game.rs
++++ b/crates/horizon-client/src/game.rs
+@@ -111,6 +111,7 @@ pub mod points {
+ }
+ mod host;
+ mod native_hooks;
++mod voicechat_server;
+ use event_loop::EventLoopCtl;
+ use hand::interact_location;
+ pub(crate) use hit::Hit;
+diff --git a/crates/horizon-client/src/game/administration/commands/mod.rs b/crates/horizon-client/src/game/administration/commands/mod.rs
+index 0434597..c0ef7a2 100644
+--- a/crates/horizon-client/src/game/administration/commands/mod.rs
++++ b/crates/horizon-client/src/game/administration/commands/mod.rs
+@@ -976,6 +976,32 @@ impl Game<'_> {
+ 
+     fn execute_command(&mut self, id: &str, ctx: &Context) -> R<i32> {
+         match id {
++            "skin" => {
++                let Some(uuid) = self.lan_acting_uuid else {
++                    self.feedback_unbroadcast(Text::translate_with_fallback(
++                        "horizon.skins.playerOnly", "Use /skin from Minecraft.", &[]));
++                    return Ok(0);
++                };
++                let Some(Arg::Str(account)) = ctx.get("account") else {
++                    self.feedback_unbroadcast(Text::translate_with_fallback(
++                        "horizon.skins.usage", "Usage: /skin <MinecraftName> or /skin reset", &[]));
++                    return Ok(0);
++                };
++                let name = (!account.eq_ignore_ascii_case("reset")).then_some(account.as_str());
++                match horizon_client::skins_restorer::select(uuid, name) {
++                    Ok(()) => {
++                        self.feedback_unbroadcast(Text::translate_with_fallback(
++                            "horizon.skins.saved", "Skin choice saved. Reconnect to apply it.", &[]));
++                        return Ok(1);
++                    }
++                    Err(error) => {
++                        log::warn!("Skin choice could not be saved: {error}");
++                        self.feedback_unbroadcast(Text::translate_with_fallback(
++                            "horizon.skins.failed", "Could not save the skin. Check the account name and server log.", &[]));
++                        return Ok(0);
++                    }
++                }
++            }
+             "native_mod_command" => self.run_native_command(ctx.clone()),
+             "help" => self.cmd_help(ctx),
+             "gamemode" => self.cmd_gamemode(ctx),
+diff --git a/crates/horizon-client/src/game/native_hooks/base.rs b/crates/horizon-client/src/game/native_hooks/base.rs
+index ec60171..60cf4af 100644
+--- a/crates/horizon-client/src/game/native_hooks/base.rs
++++ b/crates/horizon-client/src/game/native_hooks/base.rs
+@@ -669,6 +669,7 @@ impl Game<'_> {
+     }
+     /// Server teardown has finished, including the final save if possible.
+     pub(in crate::game) fn native_server_stopped(&mut self, dedicated: bool) {
++        super::voicechat_server::stop();
+         self.fire_server_stopped(dedicated);
+     }
+     /// The server opened its worlds and is about to tick (NeoForge's
+@@ -697,6 +698,9 @@ impl Game<'_> {
+         context: &LifecycleContext,
+         phase: ServerTickPhase,
+     ) {
++        if matches!(phase, ServerTickPhase::ServerTickEnd { .. }) {
++            super::voicechat_server::tick(self);
++        }
+         self.fire_server_tick(context, phase);
+     }
+     /// Before an authoritative server level's tick pass. `dimension` is its ID.
+@@ -3612,6 +3616,7 @@ impl Game<'_> {
+     /// `host.players().server_players()`, so `PlayerRef::send_payload` can reach them.
+     /// Once a join, with no player's state swapped in. Server-side.
+     pub(in crate::game) fn native_player_logged_in(&mut self, player: u128, name: &str) {
++        super::voicechat_server::advertise(self, player);
+         self.fire_player_logged_in(player, name);
+     }
+     /// `player` (`name`) left the game (NeoForge's `PlayerLoggedOutEvent`), by
+@@ -3623,6 +3628,7 @@ impl Game<'_> {
+     /// before it saves, with them still listed and able to get a last message.
+     /// Server-side.
+     pub(in crate::game) fn native_player_logged_out(&mut self, player: u128, name: &str) {
++        super::voicechat_server::left(player);
+         self.fire_player_logged_out(player, name);
+     }
+     /// `PlayerRespawnPositionEvent`: where `player` respawns, once the server found it. The
+diff --git a/crates/horizon-client/src/game/network/lan_actions/packets.rs b/crates/horizon-client/src/game/network/lan_actions/packets.rs
+index f6f337c..b39ec02 100644
+--- a/crates/horizon-client/src/game/network/lan_actions/packets.rs
++++ b/crates/horizon-client/src/game/network/lan_actions/packets.rs
+@@ -130,6 +130,11 @@ impl Game<'_> {
+ 
+     /// A packet from a guest that the hub does not handle itself.
+     pub(in crate::game) fn lan_guest_packet(&mut self, conn: u32, packet: S) {
++        if let S::CustomPayload(p) = &packet
++            && (p.channel.starts_with("voicechat:") || p.channel == "horizon:mod_net") {
++            crate::game::voicechat_server::incoming(self, conn, &p.channel, &p.data);
++            return;
++        }
+         // A crossing the hub's move check passed; a dead player's is refused, not dropped.
+         if let S::CustomPayload(p) = &packet
+             && p.channel == horizon_protocol::passage_sync::CROSS_CHANNEL
+diff --git a/crates/horizon-client/src/game/voicechat_server.rs b/crates/horizon-client/src/game/voicechat_server.rs
+new file mode 100644
+index 0000000..f2c622b
+--- /dev/null
++++ b/crates/horizon-client/src/game/voicechat_server.rs
+@@ -0,0 +1,171 @@
++// Standard SVC 2.6.x plugin channels, retaining Horizon clients.
++use crate::game::Game;
++use std::sync::Mutex;
++use std::time::{Duration, Instant};
++use voicechat_server_relay::{
++    Config, Player,
++    bridge::{Bridge, Transport, registration, valid_secret_request},
++};
++const PER_TICK: usize = 24;
++const FILE: &str = "voicechat-server.json";
++const RETRY: Duration = Duration::from_secs(60);
++enum Relay {
++    Off,
++    Running(Bridge),
++    Failed(Instant),
++}
++static RELAY: Mutex<Relay> = Mutex::new(Relay::Off);
++fn relay() -> std::sync::MutexGuard<'static, Relay> {
++    RELAY.lock().unwrap_or_else(|e| e.into_inner())
++}
++fn players(game: &Game<'_>) -> Vec<Player> {
++    game.lan.as_ref().into_iter().flat_map(|h| h.hub.online_players())
++        .map(|p| Player {
++            uuid: p.uuid,
++            name: p.name.clone(),
++            dimension: p.dimension.clone(),
++            position: p.position,
++        })
++        .collect()
++}
++fn config() -> Config {
++    let Ok(dir) = Game::native_config_dir() else {
++        return Config::default();
++    };
++    let path = dir.join(FILE);
++    let config = match std::fs::read_to_string(&path) {
++        Ok(text) => match serde_json::from_str::<Config>(&text) {
++            Ok(c) => c,
++            Err(e) => {
++                log::warn!(
++                    "Voice chat: {} doesn't read ({e}); using defaults",
++                    path.display()
++                );
++                return Config::default();
++            }
++        },
++        Err(_) => Config::default(),
++    };
++    if let Ok(text) = serde_json::to_string_pretty(&config) {
++        let _ = std::fs::write(&path, text + "\n");
++    }
++    config
++}
++pub(super) fn advertise(game: &mut Game<'_>, player: u128) {
++    if config().enabled {
++        if let Err(e) =
++            send(game, player, "minecraft:register", &registration())
++        {
++            log::debug!("Voice chat: channel registration not sent: {e}");
++        }
++    }
++}
++pub(super) fn message(game: &mut Game<'_>, player: u128, channel: &str, data: &[u8]) {
++    receive(game, player, channel, data, Transport::Horizon);
++}
++pub(super) fn plugin_message(game: &mut Game<'_>, player: u128, channel: &str, data: &[u8]) {
++    receive(game, player, channel, data, Transport::Fabric);
++}
++fn receive(game: &mut Game<'_>, player: u128, channel: &str, data: &[u8], via: Transport) {
++    if !channel.starts_with("voicechat:") {
++        return;
++    }
++    let mut relay = relay();
++    if !matches!(*relay, Relay::Running(_)) {
++        if !valid_secret_request(channel, data) {
++            return;
++        }
++        let on = players(game);
++        if !on.iter().any(|p| p.uuid == player) {
++            return;
++        }
++        if let Relay::Failed(at) = *relay
++            && at.elapsed() < RETRY
++        {
++            return;
++        }
++        let config = config();
++        match Bridge::start(config.clone()) {
++            Ok(mut server) => {
++                server.tick(on);
++                log::info!(
++                    "Voice chat: SVC 2.6.x plugin channels ready on UDP {}:{}",
++                    config.bind,
++                    config.port
++                );
++                *relay = Relay::Running(server);
++            }
++            Err(e) => {
++                log::warn!(
++                    "Voice chat: not started on UDP {}:{}: {e}",
++                    config.bind,
++                    config.port
++                );
++                *relay = Relay::Failed(Instant::now());
++                return;
++            }
++        }
++    }
++    let Relay::Running(server) = &mut *relay else {
++        return;
++    };
++    if !server.knows(player) {
++        server.tick(players(game));
++    }
++    server.message(player, channel, data, via);
++}
++pub(super) fn tick(game: &mut Game<'_>) {
++    let out = {
++        let mut relay = relay();
++        let Relay::Running(server) = &mut *relay else {
++            return;
++        };
++        server.tick(players(game));
++        server.outgoing(PER_TICK)
++    };
++    for (via, (player, channel, data)) in out {
++        let result = match via {
++            Transport::Fabric => send(game, player, &channel, &data),
++            Transport::Horizon => send_legacy(game, player, &channel, &data),
++        };
++        if let Err(e) = result {
++            log::debug!("Voice chat: {channel} not sent: {e}");
++        }
++    }
++}
++pub(super) fn left(player: u128) {
++    if let Relay::Running(server) = &mut *relay() {
++        server.left(player);
++    }
++}
++pub(super) fn stop() {
++    *relay() = Relay::Off;
++}
++
++fn send(game: &Game<'_>, player: u128, channel: &str, data: &[u8]) -> Result<(), &'static str> {
++    let guest = game.lan.as_ref().and_then(|h| h.hub.online_players().find(|g| g.uuid == player))
++        .ok_or("player left")?;
++    guest.send(&horizon_protocol::packets::play::Clientbound::CustomPayload(
++        horizon_protocol::packets::configuration::CustomPayload {
++            channel: channel.to_owned(), data: data.to_vec(),
++        }));
++    Ok(())
++}
++fn send_legacy(game: &Game<'_>, player: u128, channel: &str, data: &[u8]) -> Result<(), &'static str> {
++    let mut out = horizon_protocol::buf::Writer::new();
++    out.string(channel);
++    out.byte_array(data);
++    send(game, player, "horizon:mod_net", &out.data)
++}
++pub(super) fn incoming(game: &mut Game<'_>, conn: u32, channel: &str, data: &[u8]) {
++    let Some(uuid) = game.lan.as_ref().and_then(|h| h.hub.guest(conn)).map(|g| g.uuid) else { return };
++    if channel == "horizon:mod_net" {
++        let mut reader = horizon_protocol::buf::Reader::new(data);
++        if let (Ok(channel), Ok(data)) = (reader.string(129), reader.byte_array(30_000))
++            && reader.remaining() == 0 {
++            message(game, uuid, &channel, &data);
++        }
++    } else {
++        plugin_message(game, uuid, channel, data);
++    }
++}
+diff --git a/crates/horizon-client/src/lan/conn.rs b/crates/horizon-client/src/lan/conn.rs
+index 958f934..bcf9520 100644
+--- a/crates/horizon-client/src/lan/conn.rs
++++ b/crates/horizon-client/src/lan/conn.rs
+@@ -1279,6 +1279,14 @@ fn login_and_configure(
+     properties: Vec<login::Property>,
+ ) -> Result<Option<Parts>, String> {
+     let e = |e: horizon_protocol::Error| e.to_string();
++    let mut properties = properties;
++    if let Some(skin) = crate::skins_restorer::restore(uuid, name,
++        properties.iter().any(|p| p.name == "textures")) {
++        properties.retain(|p| p.name != "textures");
++        properties.push(login::Property {
++            name: skin.name, value: skin.value, signature: Some(skin.signature),
++        });
++    }
+     // ServerLoginPacketListenerImpl: memory connections are not compressed.
+     let threshold = shared.config.compression_threshold;
+     if threshold >= 0 && !c.is_memory() {
+@@ -1339,6 +1347,9 @@ fn login_and_configure(
+             },
+         }),
+     )?;
++    send(c, cfg::Clientbound::CustomPayload(cfg::CustomPayload {
++        channel: "horizon:mod_net".into(), data: Vec::new(),
++    }))?;
+     // ServerConfigurationPacketListenerImpl.startConfiguration: links, only
+     // when there are any (MinecraftServer.serverLinks is empty elsewhere).
+     if !shared.config.server_links.is_empty() {
+diff --git a/crates/horizon-command/src/vanilla.rs b/crates/horizon-command/src/vanilla.rs
+index f99ad23..f3ba9da 100644
+--- a/crates/horizon-command/src/vanilla.rs
++++ b/crates/horizon-command/src/vanilla.rs
+@@ -614,6 +614,10 @@ pub fn session_dispatcher(registry: &RuleRegistry, features: &[String]) -> Dispa
+     if horizon {
+         horizon_commands(&mut tree, 0);
+     }
++    let skin = tree.literal(0, "skin");
++    tree.executes(skin, "skin");
++    let account = tree.argument(skin, "account", ArgType::Word);
++    tree.executes(account, "skin");
+     // Game-session tooling, not part of vanilla's reference/parity dispatcher.
+     let profile = tree.literal(0, "modprofile");
+     tree.requires(profile, MODPROFILE_PERMISSION.0);
+diff --git a/crates/horizon-skins-restorer/Cargo.toml b/crates/horizon-skins-restorer/Cargo.toml
+new file mode 100644
+index 0000000..95183f8
+--- /dev/null
++++ b/crates/horizon-skins-restorer/Cargo.toml
+@@ -0,0 +1,9 @@
++[package]
++name = "horizon-skins-restorer"
++version = "1.0.0"
++edition = "2024"
++license = "MIT"
++[dependencies]
++serde = { version = "1", features = ["derive"] }
++serde_json = "1"
++ureq = { version = "2", default-features = false, features = ["tls"] }
+diff --git a/crates/horizon-skins-restorer/src/lib.rs b/crates/horizon-skins-restorer/src/lib.rs
+new file mode 100644
+index 0000000..bfc3544
+--- /dev/null
++++ b/crates/horizon-skins-restorer/src/lib.rs
+@@ -0,0 +1,136 @@
++//! Signed Mojang skins with persistent choices. Called only on login worker threads.
++use serde::{Deserialize, Serialize};
++use std::collections::HashMap;
++use std::io::{self, Read};
++use std::path::{Path, PathBuf};
++use std::sync::{Mutex, OnceLock};
++use std::time::{Duration, Instant};
++
++#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
++pub struct Skin {
++    pub name: String,
++    pub value: String,
++    pub signature: String,
++}
++#[derive(Default, Deserialize, Serialize)]
++struct Choices(HashMap<String, String>);
++static STORAGE: Mutex<()> = Mutex::new(());
++type Cached = HashMap<String, (Instant, Option<Skin>)>;
++static CACHE: OnceLock<Mutex<Cached>> = OnceLock::new();
++static LOOKUPS: Mutex<usize> = Mutex::new(0);
++
++pub fn valid_name(name: &str) -> bool {
++    (3..=16).contains(&name.len()) && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
++}
++fn read_choices(path: &Path) -> io::Result<Choices> {
++    match std::fs::read(path) {
++        Ok(bytes) => serde_json::from_slice(&bytes).map_err(io::Error::other),
++        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Choices::default()),
++        Err(e) => Err(e),
++    }
++}
++fn file() -> PathBuf { PathBuf::from("config/skins-restorer.json") }
++pub fn select(player: u128, name: Option<&str>) -> io::Result<()> {
++    save_choice(&file(), player, name)
++}
++fn save_choice(path: &Path, player: u128, name: Option<&str>) -> io::Result<()> {
++    if name.is_some_and(|n| !valid_name(n)) {
++        return Err(io::Error::new(io::ErrorKind::InvalidInput, "Invalid Minecraft account name"));
++    }
++    let _lock = STORAGE.lock().unwrap_or_else(|e| e.into_inner());
++    let mut choices = read_choices(path)?;
++    let key = format!("{player:032x}");
++    if let Some(name) = name { choices.0.insert(key, name.to_owned()); }
++    else { choices.0.remove(&key); }
++    std::fs::create_dir_all(path.parent().unwrap_or(Path::new(".")))?;
++    let temporary = path.with_extension("json.tmp");
++    let result = (|| {
++        use std::io::Write;
++        let mut output = std::fs::File::create(&temporary)?;
++        output.write_all(&serde_json::to_vec_pretty(&choices).map_err(io::Error::other)?)?;
++        output.sync_all()?;
++        std::fs::rename(&temporary, path)
++    })();
++    if result.is_err() { let _ = std::fs::remove_file(temporary); }
++    result
++}
++pub fn restore(player: u128, account: &str, has_skin: bool) -> Option<Skin> {
++    let selected = {
++        let _lock = STORAGE.lock().unwrap_or_else(|e| e.into_inner());
++        read_choices(&file()).ok()?.0.get(&format!("{player:032x}")).cloned()
++    };
++    let name = match selected {
++        Some(name) => name,
++        None if has_skin => return None,
++        None => account.to_owned(),
++    };
++    lookup(&name)
++}
++fn lookup(name: &str) -> Option<Skin> {
++    if !valid_name(name) { return None; }
++    let key = name.to_ascii_lowercase();
++    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
++    if let Some((at, skin)) = cache.lock().unwrap_or_else(|e| e.into_inner()).get(&key)
++        && at.elapsed() < Duration::from_secs(900) {
++        return skin.clone();
++    }
++    {
++        let mut active = LOOKUPS.lock().unwrap_or_else(|e| e.into_inner());
++        if *active >= 8 { return None; }
++        *active += 1;
++    }
++    struct Permit;
++    impl Drop for Permit {
++        fn drop(&mut self) { *LOOKUPS.lock().unwrap_or_else(|e| e.into_inner()) -= 1; }
++    }
++    let _permit = Permit;
++    let agent = ureq::AgentBuilder::new().timeout(Duration::from_secs(3)).build();
++    let get = |url: &str| -> Option<serde_json::Value> {
++        let response = agent.get(url).call().ok()?;
++        let mut bytes = Vec::new();
++        response.into_reader().take(32_769).read_to_end(&mut bytes).ok()?;
++        if bytes.len() > 32_768 { return None; }
++        serde_json::from_slice(&bytes).ok()
++    };
++    let profile = get(&format!("https://api.minecraftservices.com/minecraft/profile/lookup/name/{key}"))?;
++    let id = profile["id"].as_str()?;
++    if id.len() != 32 || !id.bytes().all(|b| b.is_ascii_hexdigit()) { return None; }
++    let skin = get(&format!("https://sessionserver.mojang.com/session/minecraft/profile/{id}?unsigned=false"))?;
++    let result = signed_texture(&skin);
++    let mut entries = cache.lock().unwrap_or_else(|e| e.into_inner());
++    if entries.len() >= 1024 { entries.retain(|_, (at, _)| at.elapsed() < Duration::from_secs(900)); }
++    if entries.len() < 1024 { entries.insert(key, (Instant::now(), result.clone())); }
++    result
++}
++fn signed_texture(profile: &serde_json::Value) -> Option<Skin> {
++    for property in profile["properties"].as_array()? {
++        if property["name"].as_str() != Some("textures") { continue; }
++        let skin: Skin = serde_json::from_value(property.clone()).ok()?;
++        if !skin.value.is_empty() && !skin.signature.is_empty()
++            && skin.value.len() <= 8192 && skin.signature.len() <= 4096 { return Some(skin); }
++    }
++    None
++}
++#[cfg(test)]
++mod tests {
++    use super::*;
++    #[test]
++    fn signed_skins_and_persistent_choices() {
++        assert!(valid_name("MHF_Steve"));
++        assert!(!valid_name("../other"));
++        assert!(signed_texture(&serde_json::json!({"properties":[{"name":"textures", "value":"data"}]})).is_none());
++        let skin = signed_texture(&serde_json::json!({"properties":[{"name":"textures", "value":"data", "signature":"signed"}]})).unwrap();
++        assert_eq!(skin.signature, "signed");
++        let dir = std::env::temp_dir().join(format!("skin-choice-{}", std::process::id()));
++        std::fs::create_dir_all(&dir).unwrap();
++        let path = dir.join("choices.json");
++        save_choice(&path, 42, Some("MHF_Steve")).unwrap();
++        assert_eq!(read_choices(&path).unwrap().0[&format!("{:032x}", 42)], "MHF_Steve");
++        save_choice(&path, 42, None).unwrap();
++        assert!(read_choices(&path).unwrap().0.is_empty());
++        std::fs::write(&path, "broken").unwrap();
++        assert!(save_choice(&path, 42, Some("MHF_Steve")).is_err());
++        assert_eq!(std::fs::read_to_string(&path).unwrap(), "broken");
++        std::fs::remove_dir_all(dir).unwrap();
++    }
++}
