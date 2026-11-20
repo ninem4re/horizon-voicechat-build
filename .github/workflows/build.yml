@@ -1,11 +1,12 @@
-name: Build Horizon voice-chat engine
+name: Build Horizon with voice chat and skins
 
 on:
   push:
     branches: [main]
     paths:
       - .github/workflows/build.yml
-      - scripts/**
+      - build_nightly.py
+      - nightly-engine.patch
       - fabric-svc.patch
       - FabricInteropTest.java
   workflow_dispatch:
@@ -26,8 +27,8 @@ env:
   CARGO_PROFILE_RELEASE_STRIP: debuginfo
   CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: clang
   RUSTFLAGS: -C target-cpu=x86-64 -C link-arg=-fuse-ld=lld
-  HORIZON_VERSION: nightly-2026-11-13-9f42064-voicechat
-  HORIZON_NIGHTLY: "1"
+  HORIZON_VERSION: nightly-2026-11-19-5ef7734-voicechat-skins
+  HORIZON_NIGHTLY: "2026-11-19 5ef7734"
 
 jobs:
   build:
@@ -39,7 +40,15 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Check out pinned official mods and build helper
+      - name: Check out the November 19 Horizon nightly
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: horizon-rust/horizon
+          ref: 5ef7734fdd854add5efd6817178be3c988d8d050
+          path: horizon
+          persist-credentials: false
+
+      - name: Check out pinned official mods
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: horizon-rust/horizon-mods
@@ -62,8 +71,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends clang lld pkg-config rsync libasound2-dev libudev-dev
-          rustup toolchain install 1.99.1 --profile minimal
-          rustup default 1.99.1
+          rustup toolchain install 1.100.0 --profile minimal
+          rustup default 1.100.0
           rustc --version
           cargo --version
 
@@ -75,17 +84,15 @@ jobs:
           cache-directories: |
             horizon-mods/native/target/cargo
             horizon-mods/native/target/horizon-mixins
-          key: nightly-2026-11-13-voicechat-rust-1.99.1
+          key: nightly-2026-11-19-voicechat-rust-1.100.0
 
       - name: Apply mod, compile server engine, verify and package
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: python3 scripts/build_engine.py --mods-root horizon-mods --output dist
+        run: python3 build_nightly.py --horizon-root horizon --mods-root horizon-mods --output dist
 
       - name: Upload downloadable engine and checksums
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: horizon-voicechat-linux-x86_64-nightly-2026-11-13
+          name: horizon-voicechat-linux-x86_64-nightly-2026-11-19
           path: dist/*
           if-no-files-found: error
           retention-days: 90
@@ -97,8 +104,8 @@ jobs:
             echo '## Horizon voice-chat engine ready'
             echo 'Download the artifact at the bottom of this run page, then unzip it.'
             echo 'Upload the .tar.gz and .sha256 files to your server and follow INSTALL.md inside the archive.'
-            echo 'Engine: November 13 nightly (9f42064), with Fabric Simple Voice Chat 2.6.x support.'
+            echo 'Engine: November 19 nightly (5ef7734), with Fabric Simple Voice Chat 2.6.x and built-in skin restoration.'
             echo 'Use the standard Fabric SVC 2.6.x client for Minecraft 26.3; keep your resources and open UDP 24454.'
-            echo '24 Rust tests, independent Java AES-GCM/UDP interoperability, engine build, startup and shared-library checks passed.'
+            echo 'Relay tests, skin tests, independent Java voice interoperability, engine startup and shared-library checks passed.'
             echo 'A live world/voice session still needs verification on your server.'
           } >> "$GITHUB_STEP_SUMMARY"
