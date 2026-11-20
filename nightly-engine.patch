@@ -357,9 +357,6 @@ index f6f337c..b39ec02 100644
          // A crossing the hub's move check passed; a dead player's is refused, not dropped.
          if let S::CustomPayload(p) = &packet
              && p.channel == horizon_protocol::passage_sync::CROSS_CHANNEL
-diff --git a/crates/horizon-client/src/game/voicechat_server.rs b/crates/horizon-client/src/game/voicechat_server.rs
-deleted file mode 100644
-index e69de29..0000000
 diff --git a/crates/horizon-client/src/lan/conn.rs b/crates/horizon-client/src/lan/conn.rs
 index 958f934..bcf9520 100644
 --- a/crates/horizon-client/src/lan/conn.rs
